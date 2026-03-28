@@ -825,6 +825,9 @@ tbody td { padding: 12px 14px; font-size: 13px; vertical-align: middle; }
     <div id="pg-analytics" class="page">
       <div class="section-header">
         <div><div class="section-title">Аналітика</div></div>
+        <button class="btn btn-primary" onclick="exportPDF()">
+          <i class="ph-light ph-file-pdf" style="font-size:15px"></i> Експорт PDF
+        </button>
       </div>
       <div class="stats-grid" id="an-stats"></div>
       <div class="card">
@@ -3523,6 +3526,252 @@ function deleteGrade(id) {
 
 // ══════════════════════════════════════════
 // ══════════════════════════════════════════
+// ══════════════════════════════════════════
+//  PDF EXPORT
+// ══════════════════════════════════════════
+function exportPDF() {
+  const s       = db.settings;
+  const cur     = s.currency || 'грн';
+  const m       = thisMonth();
+  const fmtM    = fullMonthName(m);
+  const months12 = Array.from({length:12}, (_,i) => prevMonth(m, 11-i));
+
+  // ── helpers ──
+  const fmtN = n => n.toLocaleString('uk-UA') + ' ' + cur;
+  const pct  = (a, b) => b ? Math.round(a / b * 100) : 0;
+  const badgeColor = p => p >= 80 ? '#10b981' : p >= 60 ? '#f59e0b' : '#ef4444';
+
+  // ── data ──
+  const paidAll   = db.payments.filter(p => p.status === 'paid');
+  const paidMonth = paidAll.filter(p => p.date.startsWith(m));
+  const expMonth  = db.expenses.filter(e => e.date.startsWith(m));
+  const lessMonth = db.lessons.filter(l => l.date.startsWith(m));
+  const income    = paidMonth.reduce((s, p) => s + p.amount, 0);
+  const expenses  = expMonth.reduce((s, e) => s + e.amount, 0);
+  const profit    = income - expenses;
+  const lessDone  = lessMonth.filter(l => l.status === 'done').length;
+  const lessTotal = lessMonth.length;
+  const attPct    = pct(lessDone, lessTotal);
+
+  // income 12 months
+  const inc12 = months12.map(mo =>
+    paidAll.filter(p => p.date.startsWith(mo)).reduce((s, p) => s + p.amount, 0)
+  );
+  const maxInc = Math.max(...inc12, 1);
+
+  // students summary
+  const activeStudents = db.students.filter(s => s.active);
+  const studRows = activeStudents.map(st => {
+    const stLessons = lessMonth.filter(l => l.studentId === st.id);
+    const stDone    = stLessons.filter(l => l.status === 'done').length;
+    const stIncome  = paidMonth.filter(p => p.studentId === st.id).reduce((s, p) => s + p.amount, 0);
+    const stGrades  = db.grades.filter(g => g.studentId === st.id);
+    const stAvg     = stGrades.length
+      ? Math.round(stGrades.reduce((s, g) => s + (g.score / g.max * 100), 0) / stGrades.length)
+      : null;
+    const typeLabel = {private:'Індивід.',group:'Група',online:'Онлайн'}[st.type] || st.type;
+    return `<tr>
+      <td>${st.name}</td>
+      <td>${typeLabel}</td>
+      <td style="text-align:center">${stDone}</td>
+      <td style="text-align:right;font-weight:600">${fmtN(stIncome)}</td>
+      <td style="text-align:center;color:${stAvg !== null ? badgeColor(stAvg) : '#94a3b8'};font-weight:600">
+        ${stAvg !== null ? stAvg + '%' : '—'}
+      </td>
+    </tr>`;
+  }).join('');
+
+  // expenses by category
+  const catMap = {};
+  expMonth.forEach(e => catMap[e.cat] = (catMap[e.cat] || 0) + e.amount);
+  const expRows = Object.entries(catMap).map(([cat, amt]) => `
+    <tr>
+      <td>${cat}</td>
+      <td style="text-align:right;font-weight:600">${fmtN(amt)}</td>
+      <td style="text-align:right;color:#94a3b8">${pct(amt, expenses)}%</td>
+    </tr>`).join('') || '<tr><td colspan="3" style="color:#94a3b8;text-align:center">Витрат немає</td></tr>';
+
+  // bar chart SVG (12 months income)
+  const barW = 32, gap = 6, chartH = 80;
+  const bars = months12.map((mo, i) => {
+    const h   = Math.max(Math.round(inc12[i] / maxInc * chartH), 2);
+    const x   = i * (barW + gap);
+    const y   = chartH - h;
+    const clr = mo === m ? '#2563eb' : '#bfdbfe';
+    return `<rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="4" fill="${clr}"/>
+            <text x="${x + barW/2}" y="${chartH + 14}" text-anchor="middle" font-size="8" fill="#94a3b8">${monthName(mo)}</text>
+            ${inc12[i] > 0 ? `<text x="${x + barW/2}" y="${y - 4}" text-anchor="middle" font-size="7.5" fill="#475569" font-weight="600">${Math.round(inc12[i]/1000)}к</text>` : ''}`;
+  }).join('');
+  const svgW = months12.length * (barW + gap) - gap;
+  const barChart = `<svg viewBox="0 0 ${svgW} ${chartH + 20}" xmlns="http://www.w3.org/2000/svg">${bars}</svg>`;
+
+  // ── HTML document ──
+  const now = new Date().toLocaleDateString('uk-UA', {day:'numeric', month:'long', year:'numeric'});
+  const html = `<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<title>TeachFlow — Звіт ${fmtM}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Syne:wght@700;800&display=swap');
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'DM Sans',sans-serif; color:#0f172a; background:#fff; font-size:13px; }
+  .page { max-width:800px; margin:0 auto; padding:40px 32px; }
+
+  /* header */
+  .hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px; padding-bottom:20px; border-bottom:2px solid #e2e8f0; }
+  .hdr-logo { display:flex; align-items:center; gap:10px; }
+  .hdr-icon { width:40px; height:40px; border-radius:11px; background:linear-gradient(135deg,#2563eb,#0ea5e9); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:13px; font-family:'Syne',sans-serif; }
+  .hdr-name { font-size:20px; font-weight:800; font-family:'Syne',sans-serif; letter-spacing:-.02em; }
+  .hdr-sub  { font-size:11px; color:#64748b; margin-top:1px; }
+  .hdr-meta { text-align:right; font-size:11px; color:#64748b; line-height:1.7; }
+  .hdr-period { font-size:16px; font-weight:700; color:#0f172a; font-family:'Syne',sans-serif; }
+
+  /* section */
+  .sec { margin-bottom:28px; }
+  .sec-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#2563eb; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid #e2e8f0; font-family:'Syne',sans-serif; }
+
+  /* kpi row */
+  .kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:24px; }
+  .kpi { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px 16px; }
+  .kpi-label { font-size:10.5px; color:#64748b; font-weight:500; margin-bottom:4px; }
+  .kpi-value { font-size:22px; font-weight:300; letter-spacing:-.02em; }
+  .kpi-green { color:#10b981; }
+  .kpi-red   { color:#ef4444; }
+  .kpi-blue  { color:#2563eb; }
+
+  /* table */
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  thead th { background:#f1f5f9; padding:8px 10px; text-align:left; font-size:10px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:.05em; }
+  thead th:first-child { border-radius:6px 0 0 6px; }
+  thead th:last-child  { border-radius:0 6px 6px 0; }
+  tbody td { padding:9px 10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+  tbody tr:last-child td { border-bottom:none; }
+
+  /* chart */
+  .chart-wrap { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:16px 16px 8px; }
+
+  /* finance summary */
+  .fin-row { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
+  .fin-row:last-child { border-bottom:none; }
+  .fin-row.total { font-weight:700; font-size:14px; padding-top:12px; border-top:2px solid #e2e8f0; border-bottom:none; margin-top:4px; }
+
+  /* footer */
+  .footer { margin-top:32px; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:10px; color:#94a3b8; }
+
+  @media print {
+    body { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+    .no-print { display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-logo">
+      <div class="hdr-icon">TF</div>
+      <div>
+        <div class="hdr-name">TeachFlow</div>
+        <div class="hdr-sub">${s.name || 'Викладач'} · ${s.subject || 'Іноземна мова'}</div>
+      </div>
+    </div>
+    <div class="hdr-meta">
+      <div class="hdr-period">Звіт за ${fmtM}</div>
+      <div>Сформовано: ${now}</div>
+      <div>Валюта: ${cur}</div>
+    </div>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="kpi-label">Дохід місяця</div>
+      <div class="kpi-value kpi-green">${fmtN(income)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Витрати</div>
+      <div class="kpi-value kpi-red">${fmtN(expenses)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Чистий прибуток</div>
+      <div class="kpi-value" style="color:${profit >= 0 ? '#10b981' : '#ef4444'}">${fmtN(profit)}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Відвідуваність</div>
+      <div class="kpi-value kpi-blue">${attPct}%</div>
+    </div>
+  </div>
+
+  <!-- INCOME CHART -->
+  <div class="sec">
+    <div class="sec-title">Дохід за 12 місяців</div>
+    <div class="chart-wrap">${barChart}</div>
+  </div>
+
+  <!-- FINANCE SUMMARY -->
+  <div class="sec">
+    <div class="sec-title">Фінансовий підсумок</div>
+    <div class="fin-row"><span>Загальний дохід (місяць)</span><span style="font-weight:600;color:#10b981">${fmtN(income)}</span></div>
+    <div class="fin-row"><span>Загальні витрати (місяць)</span><span style="font-weight:600;color:#ef4444">${fmtN(expenses)}</span></div>
+    <div class="fin-row total"><span>Чистий прибуток</span><span style="color:${profit >= 0 ? '#10b981' : '#ef4444'}">${fmtN(profit)}</span></div>
+  </div>
+
+  <!-- STUDENTS -->
+  <div class="sec">
+    <div class="sec-title">Учні — ${fmtM}</div>
+    <table>
+      <thead><tr><th>Ім'я</th><th>Тип</th><th>Уроків</th><th style="text-align:right">Оплата</th><th style="text-align:center">Ср. бал</th></tr></thead>
+      <tbody>${studRows || '<tr><td colspan="5" style="color:#94a3b8;text-align:center;padding:16px">Немає даних</td></tr>'}</tbody>
+    </table>
+  </div>
+
+  <!-- EXPENSES -->
+  <div class="sec">
+    <div class="sec-title">Витрати за категоріями — ${fmtM}</div>
+    <table>
+      <thead><tr><th>Категорія</th><th style="text-align:right">Сума</th><th style="text-align:right">%</th></tr></thead>
+      <tbody>${expRows}</tbody>
+    </table>
+  </div>
+
+  <!-- ATTENDANCE -->
+  <div class="sec">
+    <div class="sec-title">Відвідуваність — ${fmtM}</div>
+    <table>
+      <thead><tr><th>Показник</th><th style="text-align:right">Значення</th></tr></thead>
+      <tbody>
+        <tr><td>Всього уроків</td><td style="text-align:right;font-weight:600">${lessTotal}</td></tr>
+        <tr><td>Проведено</td><td style="text-align:right;font-weight:600;color:#10b981">${lessDone}</td></tr>
+        <tr><td>Не з'явився</td><td style="text-align:right;font-weight:600;color:#ef4444">${lessMonth.filter(l=>l.status==='noshow').length}</td></tr>
+        <tr><td>Скасовано</td><td style="text-align:right;font-weight:600;color:#f59e0b">${lessMonth.filter(l=>l.status==='cancelled').length}</td></tr>
+        <tr><td>Відвідуваність</td><td style="text-align:right;font-weight:700;color:${badgeColor(attPct)}">${attPct}%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <span>TeachFlow · Облік для викладача</span>
+    <span>© ${new Date().getFullYear()} made by Kovach</span>
+  </div>
+
+  <div class="no-print" style="margin-top:24px;text-align:center">
+    <button onclick="window.print()" style="padding:12px 32px;background:linear-gradient(135deg,#2563eb,#0ea5e9);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif">
+      🖨️ Друкувати / Зберегти PDF
+    </button>
+    <p style="margin-top:10px;font-size:12px;color:#94a3b8">У діалозі друку оберіть «Зберегти як PDF»</p>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+}
+
 // ══════════════════════════════════════════
 // APP BOOTSTRAP
 // ══════════════════════════════════════════
