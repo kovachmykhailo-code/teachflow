@@ -3912,6 +3912,9 @@ function exportStudentPDF(stId) {
       <table><thead><tr><th>Завдання</th><th>Задано</th><th>Дедлайн</th><th>Статус</th></tr></thead><tbody>${hwRows}</tbody></table>
     </div>`;
 
+  _pdfOpen(`TeachFlow — Звіт по учню: ${st.name}`, body);
+}
+
 // ══════════════════════════════════════════
 // APP BOOTSTRAP
 // ══════════════════════════════════════════
