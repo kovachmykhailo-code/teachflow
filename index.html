@@ -1578,29 +1578,26 @@ async function doChangePassword() {
 // ══════════════════════════════════════════
 async function loadDB() {
   if(!window._currentUser) return;
-  let cloudDb = null;
+  // Спочатку беремо з localStorage — миттєво і завжди свіже
+  const raw = localStorage.getItem('teachflow-db');
+  if(raw) { try { db = JSON.parse(raw); } catch { db = {}; } }
+  // Потім намагаємось синхронізувати з Firestore
   try {
     const payload = await window._fbLoadDB(window._currentUser.uid);
     if(payload) {
+      let cloudDb;
       try { cloudDb = JSON.parse(payload); } catch { cloudDb = null; }
+      if(cloudDb) {
+        // Використовуємо хмарну версію і оновлюємо localStorage
+        db = cloudDb;
+        localStorage.setItem('teachflow-db', JSON.stringify(db));
+      }
+    } else if(!raw) {
+      db = {};
     }
   } catch(e) {
-    console.warn('Firestore load failed, using localStorage fallback:', e);
-  }
-  // Беремо localStorage як fallback або якщо хмара не відповіла
-  const raw = localStorage.getItem('teachflow-db');
-  let localDb = null;
-  if(raw) { try { localDb = JSON.parse(raw); } catch { localDb = null; } }
-
-  // Використовуємо той варіант що є; локальний пріоритетний якщо хмара не завантажилась
-  if(cloudDb) {
-    db = cloudDb;
-    // Якщо локальний є і відрізняється — зберігаємо хмарний в localStorage
-    localStorage.setItem('teachflow-db', JSON.stringify(db));
-  } else if(localDb) {
-    db = localDb;
-  } else {
-    db = {};
+    console.warn('Firestore load failed, using localStorage:', e);
+    if(!raw) db = {};
   }
   if (!db.students)  db.students = [];
   if (!db.lessons)   db.lessons = [];
@@ -1615,9 +1612,9 @@ async function loadDB() {
 
 let _saveTimer = null;
 function saveDB() {
-  // Local cache for instant UI
+  // Синхронно в localStorage
   localStorage.setItem('teachflow-db', JSON.stringify(db));
-  // Debounce cloud save (500ms)
+  // В Firestore — з коротким debounce щоб не спамити при серії змін
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(async () => {
     if(!window._currentUser) return;
@@ -1626,7 +1623,7 @@ function saveDB() {
     } catch(e) {
       console.warn('Firestore save failed:', e);
     }
-  }, 1500);
+  }, 300);
 }
 
 // ══════════════════════════════════════════
@@ -3414,12 +3411,18 @@ function filterHomework(f, el) {
 
 function renderHomework() {
   const todayStr = today();
-  // auto-mark overdue: тільки pending, тільки якщо дедлайн вже минув (не done!)
+  // auto-mark overdue (включаючи сьогоднішній дедлайн), тільки pending
   let autoChanged = false;
   db.homework.forEach(h => {
     if(h.status === 'pending' && h.due <= todayStr) { h.status = 'overdue'; autoChanged = true; }
   });
-  if(autoChanged) saveDB();
+  if(autoChanged) {
+    localStorage.setItem('teachflow-db', JSON.stringify(db));
+    if(window._currentUser) {
+      window._fbSaveDB(window._currentUser.uid, JSON.stringify(db))
+        .catch(e => console.warn('Firestore save error:', e));
+    }
+  }
 
   const all = db.homework;
   const filtered = hwFilter==='all' ? all : all.filter(h=>h.status===hwFilter);
@@ -3465,7 +3468,7 @@ function renderHomework() {
     </div>`;
   }).join('') || `<div class="card" style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text-muted)">Завдань немає</div>`;
 
-  // Оновлюємо бейдж через updateBadges щоб всі лічильники були синхронні
+  // Оновлюємо всі бейджі синхронно
   updateBadges();
 }
 
@@ -3510,7 +3513,16 @@ function saveHomework() {
 
 function markHomeworkDone(id) {
   const h = db.homework.find(x=>x.id===id);
-  if(h) { h.status='done'; saveDB(); renderHomework(); }
+  if(!h) return;
+  h.status = 'done';
+  // Синхронно в localStorage, потім хмара
+  localStorage.setItem('teachflow-db', JSON.stringify(db));
+  // Firestore без debounce — зберігаємо одразу
+  if(window._currentUser) {
+    window._fbSaveDB(window._currentUser.uid, JSON.stringify(db))
+      .catch(e => console.warn('Firestore save error:', e));
+  }
+  renderHomework();
 }
 
 function deleteHomework(id) {
