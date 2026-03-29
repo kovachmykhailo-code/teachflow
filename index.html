@@ -997,11 +997,6 @@ tbody td { padding: 12px 14px; font-size: 13px; vertical-align: middle; }
           <button class="btn btn-primary btn-sm" onclick="addExpCat()">Додати</button>
         </div>
       </div>
-      <div class="card" style="margin-top:0;border-color:var(--red-light)">
-        <div class="card-title" style="margin-bottom:8px;color:var(--red)">⚠️ Небезпечна зона</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Скидає всі дані до початкового демо-стану. Всі ваші записи буде втрачено безповоротно.</div>
-        <button class="btn btn-danger" onclick="resetToDemo()">🗑 Скинути всі дані до демо</button>
-      </div>
     </div>
 
     <!-- ATTENDANCE -->
@@ -3461,8 +3456,10 @@ function renderHomework() {
       </div>
       ${h.comment?`<div style="font-size:12px;color:var(--text-muted);background:var(--bg);padding:7px 10px;border-radius:8px;">💬 ${h.comment}</div>`:''}
       <div class="hw-card-actions">
-        ${!isDone?`<button class="btn btn-success btn-sm" onclick="markHomeworkDone('${h.id}')">✅ Здано</button>`:''}
-        ${isDone?`<span class="badge badge-green" style="font-size:12px;padding:5px 10px;">✅ Здано</span>`:''}
+        ${isDone
+          ? `<span class="badge badge-green" style="font-size:12px;padding:5px 10px;">✅ Здано</span>`
+          : `<span class="badge" style="font-size:12px;padding:5px 10px;background:#e2e8f0;color:#94a3b8;cursor:pointer;border-radius:20px;display:inline-flex;align-items:center;gap:4px;" onclick="markHomeworkDone('${h.id}')" title="Натисніть, щоб позначити як здано">✅ Здано</span>`
+        }
       </div>
     </div>`;
   }).join('') || `<div class="card" style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text-muted)">Завдань немає</div>`;
