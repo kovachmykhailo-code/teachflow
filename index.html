@@ -997,6 +997,11 @@ tbody td { padding: 12px 14px; font-size: 13px; vertical-align: middle; }
           <button class="btn btn-primary btn-sm" onclick="addExpCat()">Додати</button>
         </div>
       </div>
+      <div class="card" style="margin-top:0;border-color:var(--red-light)">
+        <div class="card-title" style="margin-bottom:8px;color:var(--red)">⚠️ Небезпечна зона</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Скидає всі дані до початкового демо-стану. Всі ваші записи буде втрачено безповоротно.</div>
+        <button class="btn btn-danger" onclick="resetToDemo()">🗑 Скинути всі дані до демо</button>
+      </div>
     </div>
 
     <!-- ATTENDANCE -->
@@ -1578,10 +1583,8 @@ async function doChangePassword() {
 // ══════════════════════════════════════════
 async function loadDB() {
   if(!window._currentUser) return;
-  // Спочатку localStorage — миттєво
   const raw = localStorage.getItem('teachflow-db');
   if(raw) { try { db = JSON.parse(raw); } catch { db = {}; } }
-  // Потім Firestore — синхронізація
   try {
     const payload = await window._fbLoadDB(window._currentUser.uid);
     if(payload) {
@@ -1605,7 +1608,9 @@ async function loadDB() {
 
 let _saveTimer = null;
 function saveDB() {
+  // Local cache for instant UI
   localStorage.setItem('teachflow-db', JSON.stringify(db));
+  // Debounce cloud save (500ms)
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(async () => {
     if(!window._currentUser) return;
@@ -1726,11 +1731,11 @@ function seedDemo() {
   // Homework
   db.homework = [];
   const hwSeed = [
-    {studentId:'s1', text:'Прочитати Unit 5, вправи A-C', given:prevMonth(thisMonth(),0)+'-10', due:today(), status:'overdue', priority:'high', comment:''},
+    {studentId:'s1', text:'Прочитати Unit 5, вправи A-C', given:prevMonth(thisMonth(),0)+'-10', due:today(), status:'pending', priority:'high', comment:''},
     {studentId:'s2', text:'Написати есе "My future career" (200 слів)', given:prevMonth(thisMonth(),0)+'-08', due:prevMonth(thisMonth(),0)+'-15', status:'done', priority:'high', comment:'\u0412\u0456\u0434\u043c\u0456\u043d\u043d\u0430 \u0440\u043e\u0431\u043e\u0442\u0430!'},
     {studentId:'s3', text:'Відеоурок Grammar in Use Unit 12', given:prevMonth(thisMonth(),0)+'-05', due:prevMonth(thisMonth(),0)+'-12', status:'overdue', priority:'normal', comment:''},
     {studentId:'s5', text:'Business Email writing practice', given:prevMonth(thisMonth(),0)+'-10', due:prevMonth(thisMonth(),0)+'-17', status:'done', priority:'normal', comment:'\u0414\u043e\u0431\u0440\u0435, \u0454 \u043f\u043e\u043c\u0438\u043b\u043a\u0438 \u0443 \u0444\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u043e\u043c\u0443 \u0441\u0442\u0438\u043b\u0456'},
-    {studentId:'s1', text:'\u0421\u043b\u043e\u0432\u043d\u0438\u043a\u043e\u0432\u0438\u0439 \u0434\u0438\u043a\u0442\u0430\u043d\u0442 \u2014 \u0442\u0435\u043c\u0430 "Technology"', given:prevMonth(thisMonth(),0)+'-14', due:prevMonth(thisMonth(),0)+'-21', status:'overdue', priority:'normal', comment:''},
+    {studentId:'s1', text:'\u0421\u043b\u043e\u0432\u043d\u0438\u043a\u043e\u0432\u0438\u0439 \u0434\u0438\u043a\u0442\u0430\u043d\u0442 \u2014 \u0442\u0435\u043c\u0430 "Technology"', given:prevMonth(thisMonth(),0)+'-14', due:prevMonth(thisMonth(),0)+'-21', status:'pending', priority:'normal', comment:''},
     {studentId:'s6', text:'Listening: BBC Learning English ep.34', given:prevMonth(thisMonth(),0)+'-12', due:prevMonth(thisMonth(),0)+'-19', status:'done', priority:'low', comment:''},
   ];
   hwSeed.forEach(h => db.homework.push({id:uid(), ...h}));
@@ -3402,7 +3407,7 @@ function filterHomework(f, el) {
 
 function renderHomework() {
   const todayStr = today();
-  // auto-mark overdue — тільки pending, дедлайн минув або сьогодні
+  // auto-mark overdue — тільки pending, дедлайн сьогодні або вже минув
   let autoChanged = false;
   db.homework.forEach(h => {
     if(h.status === 'pending' && h.due <= todayStr) { h.status = 'overdue'; autoChanged = true; }
@@ -3422,7 +3427,7 @@ function renderHomework() {
     <div class="stat-card"><div class="stat-label">Прострочено</div><div class="stat-value" style="color:var(--red)">${overdue}</div></div>
   `;
 
-  // Виправлено: порядок сортування без falsy-0 баг
+  // Виправлено: явне порівняння замість || (0 є falsy!)
   const statusOrder = {'overdue':0,'pending':1,'done':2};
   const sorted = [...filtered].sort((a,b)=>{
     const oa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 1;
@@ -3434,14 +3439,17 @@ function renderHomework() {
     const st = db.students.find(s=>s.id===h.studentId);
     const dueD = new Date(h.due+'T12:00');
     const dueStr = dueD.toLocaleDateString('uk-UA',{day:'numeric',month:'short'});
-    const isOverdue = h.status==='overdue';
-    const isDone = h.status==='done';
-    const priorityIcon = h.priority==='high'?'🔴':h.priority==='low'?'⚪':'🟡';
-    // Клас картки: done завжди зелена незалежно від дедлайну
+    const isDone    = h.status === 'done';
+    const isOverdue = h.status === 'overdue';
+    const isPending = h.status === 'pending';
+    // Колір кружечка статусу (не пріоритет!)
+    const statusDot = isDone ? '🟢' : isOverdue ? '🔴' : '🟡';
+    const priorityIcon = h.priority==='high'?'❗':h.priority==='low'?'':'';
+    // Клас картки — done завжди зелена, навіть якщо дедлайн минув
     const cardClass = isDone ? 'hw-done' : isOverdue ? 'hw-overdue' : 'hw-pending';
     return `<div class="hw-card ${cardClass}">
       <div class="hw-card-top">
-        <div class="hw-card-title">${priorityIcon} ${h.text}</div>
+        <div class="hw-card-title">${statusDot} ${h.text}${priorityIcon?` <span style="font-size:11px">${priorityIcon}</span>`:''}</div>
         <div style="display:flex;gap:4px;flex-shrink:0">
           <button class="btn btn-ghost btn-sm" onclick="editHomework('${h.id}')" title="Редагувати">✏️</button>
           <button class="btn btn-danger btn-sm" onclick="deleteHomework('${h.id}')" title="Видалити">🗑</button>
@@ -3499,6 +3507,18 @@ function saveHomework() {
     db.homework.push({id:uid(),...data});
   }
   saveDB(); closeModal('modal-homework'); renderHomework();
+}
+
+function resetToDemo() {
+  if(!confirm('Скинути ВСІ дані до демо? Це незворотньо!')) return;
+  localStorage.removeItem('teachflow-db');
+  db = {};
+  seedDemo();
+  saveDB();
+  renderDashboard();
+  updateBadges();
+  goto('dashboard');
+  alert('✅ Дані скинуто до демо-стану');
 }
 
 function markHomeworkDone(id) {
