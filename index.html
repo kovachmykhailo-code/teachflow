@@ -3402,10 +3402,12 @@ function filterHomework(f, el) {
 
 function renderHomework() {
   const todayStr = today();
-  // auto-mark overdue
+  // auto-mark overdue (включаючи сьогоднішній дедлайн)
+  let autoChanged = false;
   db.homework.forEach(h => {
-    if(h.status==='pending' && h.due < todayStr) h.status='overdue';
+    if(h.status==='pending' && h.due <= todayStr) { h.status='overdue'; autoChanged = true; }
   });
+  if(autoChanged) saveDB();
 
   const all = db.homework;
   const filtered = hwFilter==='all' ? all : all.filter(h=>h.status===hwFilter);
