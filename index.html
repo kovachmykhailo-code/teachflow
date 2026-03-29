@@ -1578,17 +1578,29 @@ async function doChangePassword() {
 // ══════════════════════════════════════════
 async function loadDB() {
   if(!window._currentUser) return;
+  let cloudDb = null;
   try {
     const payload = await window._fbLoadDB(window._currentUser.uid);
     if(payload) {
-      try { db = JSON.parse(payload); } catch { db = {}; }
-    } else {
-      db = {};
+      try { cloudDb = JSON.parse(payload); } catch { cloudDb = null; }
     }
   } catch(e) {
     console.warn('Firestore load failed, using localStorage fallback:', e);
-    const raw = localStorage.getItem('teachflow-db');
-    if(raw) { try { db = JSON.parse(raw); } catch { db = {}; } }
+  }
+  // Беремо localStorage як fallback або якщо хмара не відповіла
+  const raw = localStorage.getItem('teachflow-db');
+  let localDb = null;
+  if(raw) { try { localDb = JSON.parse(raw); } catch { localDb = null; } }
+
+  // Використовуємо той варіант що є; локальний пріоритетний якщо хмара не завантажилась
+  if(cloudDb) {
+    db = cloudDb;
+    // Якщо локальний є і відрізняється — зберігаємо хмарний в localStorage
+    localStorage.setItem('teachflow-db', JSON.stringify(db));
+  } else if(localDb) {
+    db = localDb;
+  } else {
+    db = {};
   }
   if (!db.students)  db.students = [];
   if (!db.lessons)   db.lessons = [];
@@ -1614,7 +1626,7 @@ function saveDB() {
     } catch(e) {
       console.warn('Firestore save failed:', e);
     }
-  }, 500);
+  }, 1500);
 }
 
 // ══════════════════════════════════════════
@@ -1976,7 +1988,7 @@ function updateBadges() {
 
   // Overdue homework
   const todayStr = today();
-  const overdueHw = (db.homework||[]).filter(h=>h.status!=='done'&&h.due<todayStr).length;
+  const overdueHw = (db.homework||[]).filter(h=>h.status!=='done'&&h.due<=todayStr).length;
   const nbHwDue = document.getElementById('nb-hw-due');
   if(overdueHw>0) { nbHwDue.textContent=overdueHw; nbHwDue.style.display=''; }
   else { nbHwDue.style.display='none'; }
@@ -3402,10 +3414,10 @@ function filterHomework(f, el) {
 
 function renderHomework() {
   const todayStr = today();
-  // auto-mark overdue (включаючи сьогоднішній дедлайн)
+  // auto-mark overdue: тільки pending, тільки якщо дедлайн вже минув (не done!)
   let autoChanged = false;
   db.homework.forEach(h => {
-    if(h.status==='pending' && h.due <= todayStr) { h.status='overdue'; autoChanged = true; }
+    if(h.status === 'pending' && h.due <= todayStr) { h.status = 'overdue'; autoChanged = true; }
   });
   if(autoChanged) saveDB();
 
@@ -3453,10 +3465,8 @@ function renderHomework() {
     </div>`;
   }).join('') || `<div class="card" style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text-muted)">Завдань немає</div>`;
 
-  // update badge
-  const nbHw = document.getElementById('nb-hw-due');
-  if(overdue>0) { nbHw.textContent=overdue; nbHw.style.display=''; }
-  else nbHw.style.display='none';
+  // Оновлюємо бейдж через updateBadges щоб всі лічильники були синхронні
+  updateBadges();
 }
 
 let editHwId = null;
