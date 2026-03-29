@@ -1578,23 +1578,16 @@ async function doChangePassword() {
 // ══════════════════════════════════════════
 async function loadDB() {
   if(!window._currentUser) return;
-  // Спочатку беремо з localStorage — миттєво і завжди свіже
+  // Спочатку localStorage — миттєво
   const raw = localStorage.getItem('teachflow-db');
   if(raw) { try { db = JSON.parse(raw); } catch { db = {}; } }
-  // Потім намагаємось синхронізувати з Firestore
+  // Потім Firestore — синхронізація
   try {
     const payload = await window._fbLoadDB(window._currentUser.uid);
     if(payload) {
-      let cloudDb;
-      try { cloudDb = JSON.parse(payload); } catch { cloudDb = null; }
-      if(cloudDb) {
-        // Використовуємо хмарну версію і оновлюємо localStorage
-        db = cloudDb;
-        localStorage.setItem('teachflow-db', JSON.stringify(db));
-      }
-    } else if(!raw) {
-      db = {};
-    }
+      let cloud; try { cloud = JSON.parse(payload); } catch { cloud = null; }
+      if(cloud) { db = cloud; localStorage.setItem('teachflow-db', JSON.stringify(db)); }
+    } else if(!raw) { db = {}; }
   } catch(e) {
     console.warn('Firestore load failed, using localStorage:', e);
     if(!raw) db = {};
@@ -1612,9 +1605,7 @@ async function loadDB() {
 
 let _saveTimer = null;
 function saveDB() {
-  // Синхронно в localStorage
   localStorage.setItem('teachflow-db', JSON.stringify(db));
-  // В Firestore — з коротким debounce щоб не спамити при серії змін
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(async () => {
     if(!window._currentUser) return;
@@ -1735,11 +1726,11 @@ function seedDemo() {
   // Homework
   db.homework = [];
   const hwSeed = [
-    {studentId:'s1', text:'Прочитати Unit 5, вправи A-C', given:prevMonth(thisMonth(),0)+'-10', due:today(), status:'pending', priority:'high', comment:''},
+    {studentId:'s1', text:'Прочитати Unit 5, вправи A-C', given:prevMonth(thisMonth(),0)+'-10', due:today(), status:'overdue', priority:'high', comment:''},
     {studentId:'s2', text:'Написати есе "My future career" (200 слів)', given:prevMonth(thisMonth(),0)+'-08', due:prevMonth(thisMonth(),0)+'-15', status:'done', priority:'high', comment:'\u0412\u0456\u0434\u043c\u0456\u043d\u043d\u0430 \u0440\u043e\u0431\u043e\u0442\u0430!'},
     {studentId:'s3', text:'Відеоурок Grammar in Use Unit 12', given:prevMonth(thisMonth(),0)+'-05', due:prevMonth(thisMonth(),0)+'-12', status:'overdue', priority:'normal', comment:''},
     {studentId:'s5', text:'Business Email writing practice', given:prevMonth(thisMonth(),0)+'-10', due:prevMonth(thisMonth(),0)+'-17', status:'done', priority:'normal', comment:'\u0414\u043e\u0431\u0440\u0435, \u0454 \u043f\u043e\u043c\u0438\u043b\u043a\u0438 \u0443 \u0444\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u043e\u043c\u0443 \u0441\u0442\u0438\u043b\u0456'},
-    {studentId:'s1', text:'\u0421\u043b\u043e\u0432\u043d\u0438\u043a\u043e\u0432\u0438\u0439 \u0434\u0438\u043a\u0442\u0430\u043d\u0442 \u2014 \u0442\u0435\u043c\u0430 "Technology"', given:prevMonth(thisMonth(),0)+'-14', due:prevMonth(thisMonth(),0)+'-21', status:'pending', priority:'normal', comment:''},
+    {studentId:'s1', text:'\u0421\u043b\u043e\u0432\u043d\u0438\u043a\u043e\u0432\u0438\u0439 \u0434\u0438\u043a\u0442\u0430\u043d\u0442 \u2014 \u0442\u0435\u043c\u0430 "Technology"', given:prevMonth(thisMonth(),0)+'-14', due:prevMonth(thisMonth(),0)+'-21', status:'overdue', priority:'normal', comment:''},
     {studentId:'s6', text:'Listening: BBC Learning English ep.34', given:prevMonth(thisMonth(),0)+'-12', due:prevMonth(thisMonth(),0)+'-19', status:'done', priority:'low', comment:''},
   ];
   hwSeed.forEach(h => db.homework.push({id:uid(), ...h}));
@@ -3411,18 +3402,12 @@ function filterHomework(f, el) {
 
 function renderHomework() {
   const todayStr = today();
-  // auto-mark overdue (включаючи сьогоднішній дедлайн), тільки pending
+  // auto-mark overdue — тільки pending, дедлайн минув або сьогодні
   let autoChanged = false;
   db.homework.forEach(h => {
     if(h.status === 'pending' && h.due <= todayStr) { h.status = 'overdue'; autoChanged = true; }
   });
-  if(autoChanged) {
-    localStorage.setItem('teachflow-db', JSON.stringify(db));
-    if(window._currentUser) {
-      window._fbSaveDB(window._currentUser.uid, JSON.stringify(db))
-        .catch(e => console.warn('Firestore save error:', e));
-    }
-  }
+  if(autoChanged) saveDB();
 
   const all = db.homework;
   const filtered = hwFilter==='all' ? all : all.filter(h=>h.status===hwFilter);
@@ -3437,9 +3422,12 @@ function renderHomework() {
     <div class="stat-card"><div class="stat-label">Прострочено</div><div class="stat-value" style="color:var(--red)">${overdue}</div></div>
   `;
 
+  // Виправлено: порядок сортування без falsy-0 баг
+  const statusOrder = {'overdue':0,'pending':1,'done':2};
   const sorted = [...filtered].sort((a,b)=>{
-    const order = {overdue:0,pending:1,done:2};
-    return (order[a.status]||1)-(order[b.status]||1) || a.due.localeCompare(b.due);
+    const oa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 1;
+    const ob = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 1;
+    return oa - ob || a.due.localeCompare(b.due);
   });
 
   document.getElementById('hw-cards').innerHTML = sorted.map(h=>{
@@ -3447,8 +3435,11 @@ function renderHomework() {
     const dueD = new Date(h.due+'T12:00');
     const dueStr = dueD.toLocaleDateString('uk-UA',{day:'numeric',month:'short'});
     const isOverdue = h.status==='overdue';
+    const isDone = h.status==='done';
     const priorityIcon = h.priority==='high'?'🔴':h.priority==='low'?'⚪':'🟡';
-    return `<div class="hw-card hw-${h.status}">
+    // Клас картки: done завжди зелена незалежно від дедлайну
+    const cardClass = isDone ? 'hw-done' : isOverdue ? 'hw-overdue' : 'hw-pending';
+    return `<div class="hw-card ${cardClass}">
       <div class="hw-card-top">
         <div class="hw-card-title">${priorityIcon} ${h.text}</div>
         <div style="display:flex;gap:4px;flex-shrink:0">
@@ -3462,13 +3453,12 @@ function renderHomework() {
       </div>
       ${h.comment?`<div style="font-size:12px;color:var(--text-muted);background:var(--bg);padding:7px 10px;border-radius:8px;">💬 ${h.comment}</div>`:''}
       <div class="hw-card-actions">
-        ${h.status!=='done'?`<button class="btn btn-success btn-sm" onclick="markHomeworkDone('${h.id}')">✅ Здано</button>`:''}
-        ${h.status==='done'?`<span class="badge badge-green" style="font-size:12px;padding:5px 10px;">✅ Здано</span>`:''}
+        ${!isDone?`<button class="btn btn-success btn-sm" onclick="markHomeworkDone('${h.id}')">✅ Здано</button>`:''}
+        ${isDone?`<span class="badge badge-green" style="font-size:12px;padding:5px 10px;">✅ Здано</span>`:''}
       </div>
     </div>`;
   }).join('') || `<div class="card" style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text-muted)">Завдань немає</div>`;
 
-  // Оновлюємо всі бейджі синхронно
   updateBadges();
 }
 
@@ -3513,16 +3503,7 @@ function saveHomework() {
 
 function markHomeworkDone(id) {
   const h = db.homework.find(x=>x.id===id);
-  if(!h) return;
-  h.status = 'done';
-  // Синхронно в localStorage, потім хмара
-  localStorage.setItem('teachflow-db', JSON.stringify(db));
-  // Firestore без debounce — зберігаємо одразу
-  if(window._currentUser) {
-    window._fbSaveDB(window._currentUser.uid, JSON.stringify(db))
-      .catch(e => console.warn('Firestore save error:', e));
-  }
-  renderHomework();
+  if(h) { h.status='done'; saveDB(); renderHomework(); }
 }
 
 function deleteHomework(id) {
